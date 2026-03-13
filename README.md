@@ -24,7 +24,6 @@ It acts as a fully automated registrar, logistical guide, and remote administrat
 - **Supported Load:** 4,000 active participants.
 - **Event Capability:** Managed 50 concurrent sub-events and master venue logic.
 - **Zero Race Conditions:** 100% capacity safety via SQL `SERIALIZABLE` isolation and unique constraints.
-- **Cost Efficiency:** Maintained LLM costs at an incredible **<$12** for the entire 3-day event through aggressive token management.
 
 ---
 
