@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Data
+*.backup
+*.sql
+!sql.txt
+*.xlsx
+
+# Large files
+*.pptx
+*.pdf
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store

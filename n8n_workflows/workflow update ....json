@@ -1,0 +1,448 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chat-local",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "c09c551d-faea-4ca4-ba68-ca41ca7b696d",
+      "name": "Webhook",
+      "webhookId": "78a4029f-cff8-44ab-a4f4-2a1662ac52e8"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Expecting request body like:\n// { \"phone\": \"+91...\", \"message\": \"text\" }\n\n// In webhook executions, n8n puts JSON under $json.body\n// but in the full wrapper you also see it under $json.params.body.\n// We'll support both to be safe.\n\nconst body = $json.body || ($json.params && $json.params.body) || $json;\n\nconst phone = body.phone;\nconst message = body.message;\n\nif (!phone || !message) {\n  throw new Error('Missing phone or message in request body');\n}\n\nreturn {\n  json: {\n    phone,\n    message\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        0
+      ],
+      "id": "a96a5753-3b2d-4b8b-80d2-049525adeb09",
+      "name": "Parse Input"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  '{{$json[\"phone\"]}}'::text  AS phone,\n  '{{$json[\"message\"]}}'::text AS user_message,\n  u.name,\n  u.hotel_name,\n  u.hotel_room,\n  u.hotel_gmaps_link,\n  u.coordinator_name,\n  u.coordinator_phone,\n  ch.summary,\n  ch.recent_messages\nFROM users u\nLEFT JOIN chat_history ch ON u.phone = ch.phone\nWHERE u.phone = '{{$json[\"phone\"]}}';\n\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        304,
+        0
+      ],
+      "id": "9568f928-fa5d-4b37-81fc-a8e1f2957941",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "TuWS7LTe9l0P4mI9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// We are directly after the Postgres node.\n// So $json is the row returned by Load User & Chat.\n\nconst row = $json;\n\nconst phone        = row.phone;\nconst userText     = row.user_message;\n\nconst userName     = row.name;\nconst hotelName    = row.hotel_name;\nconst hotelRoom    = row.hotel_room;\nconst hotelMap     = row.hotel_gmaps_link;\nconst coordName    = row.coordinator_name;\nconst coordPhone   = row.coordinator_phone;\n\nconst prevSummary  = row.summary || null;\nconst prevRecent   = row.recent_messages || [];\n\n// System context based on summary\nconst systemContext = prevSummary\n  ? `You are a friendly event AI assistant.\\nContext: ${prevSummary}`\n  : `You are a friendly event AI assistant.\\nContext: First-time user.`;\n\n// Messages array (we keep this for future tools if needed)\nconst messages = [\n  { role: 'system', content: systemContext },\n  ...prevRecent,\n  { role: 'user', content: userText },\n];\n\n// Build a single prompt string for the OpenAI node\nconst prompt = messages\n  .map(m => `${m.role.toUpperCase()}: ${m.content}`)\n  .join('\\n');\n\nreturn {\n  json: {\n    phone,\n    userName,\n    hotelName,\n    hotelRoom,\n    hotelMap,\n    coordName,\n    coordPhone,\n    prevSummary,\n    prevRecent,\n    userMessage: userText,\n    messages,\n    prompt\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        512,
+        0
+      ],
+      "id": "a0cb23ed-5c70-4c53-9bbb-3e82ae94846a",
+      "name": "Build LLM Messages"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-nano-2025-04-14",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-NANO-2025-04-14"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "={{$json[\"prompt\"]}}"
+            }
+          ]
+        },
+        "simplify": false,
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ],
+      "id": "a5d00365-07c1-459b-87cd-3db8b67d34d1",
+      "name": "AI Reply",
+      "credentials": {
+        "openAiApi": {
+          "id": "KiSSYToArySdfoIX",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Extract AI response\nconst ai = $json;\nconst aiReply = ai.output[0].content[0].text;\n\n// Try to parse as JSON (if AI returned structured action)\nlet parsed;\ntry {\n  parsed = JSON.parse(aiReply);\n} catch (e) {\n  // AI returned plain text, not JSON - treat as pure chat\n  return {\n    json: {\n      action_type: 'chat',\n      reply_text: aiReply\n    }\n  };\n}\n\n// If AI returned JSON with action structure\nreturn {\n  json: {\n    action_type: parsed.action?.type || 'chat',\n    event_id: parsed.action?.event_id || null,\n    reply_text: parsed.reply_text || aiReply\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        0
+      ],
+      "id": "238d033e-bb4e-4283-96de-6ab8fe39c088",
+      "name": "Parse AI Action"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "4d53d839-a523-493b-8a0c-928be22a69fa",
+              "leftValue": "={{ $json.action_type }}",
+              "rightValue": "register",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "e47c9406-9d52-426a-a958-aea9ee9e4409",
+              "leftValue": "={{ $json.action_type }}",
+              "rightValue": "unregister",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1136,
+        0
+      ],
+      "id": "c33d28e8-6235-462a-a2a3-16060736d040",
+      "name": "Action Router"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT register_for_event(\n  '{{$items(\"Parse Input\")[0].json[\"phone\"]}}',\n  {{$json[\"event_id\"]}}\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1344,
+        -100
+      ],
+      "id": "c6f10b2c-6493-4f05-b1c7-70353d1adbb8",
+      "name": "Register User for Event",
+      "credentials": {
+        "postgres": {
+          "id": "TuWS7LTe9l0P4mI9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT unregister_from_event(\n  '{{$items(\"Parse Input\")[0].json[\"phone\"]}}',\n  {{$json[\"event_id\"]}}\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1344,
+        100
+      ],
+      "id": "629fce9e-949e-4620-8e8b-a7fbeba942d7",
+      "name": "Unregister User from Event",
+      "credentials": {
+        "postgres": {
+          "id": "TuWS7LTe9l0P4mI9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const actionType = $items('Parse AI Action')[0].json.action_type;\nconst baseReply = $items('Parse AI Action')[0].json.reply_text;\n\nlet functionResponse;\n\nif (actionType === 'register') {\n  try {\n    functionResponse = $items('Register User for Event')[0].json.register_for_event;\n  } catch (e) {\n    // Register branch didn't run\n    functionResponse = null;\n  }\n} else if (actionType === 'unregister') {\n  try {\n    functionResponse = $items('Unregister User from Event')[0].json.unregister_from_event;\n  } catch (e) {\n    // Unregister branch didn't run\n    functionResponse = null;\n  }\n}\n\n// For now, keep reply as-is\n// In Step 6, AI will interpret function results and craft responses\nreturn {\n  json: {\n    finalReply: baseReply,\n    functionResponse: functionResponse || null,\n    actionType: actionType\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        0
+      ],
+      "id": "d785744b-cb56-41a3-8b33-48e3d128539d",
+      "name": "Format Action Result"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// $json is the output from Format Action Result\nconst item = $json;\nconst aiReply = item.finalReply;\n\n// Get the context from Build LLM Messages\nconst ctx = $items('Build LLM Messages')[0].json;\n\n// Previous conversation context\nlet recent    = ctx.prevRecent || [];\nconst userMsg = ctx.userMessage;\n\n// Append the new user + assistant turn\nrecent.push({ role: 'user',      content: userMsg });\nrecent.push({ role: 'assistant', content: aiReply });\n\n// Keep only last 3 messages\nconst newRecent  = recent.slice(-3);\n\n// For now, keep previous summary as-is\nconst newSummary = ctx.prevSummary || null;\n\nreturn {\n  json: {\n    phone: ctx.phone,\n    summary: newSummary,\n    recent_messages: newRecent,\n    aiReply\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "id": "71f5d4cf-8620-4e28-b72a-3063f6a42c1e",
+      "name": "Update chat context"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO chat_history (phone, summary, recent_messages, updated_at)\nVALUES (\n  $1,\n  $2,\n  $3::jsonb,\n  NOW()\n)\nON CONFLICT (phone)\nDO UPDATE SET\n  summary         = EXCLUDED.summary,\n  recent_messages = EXCLUDED.recent_messages,\n  updated_at      = NOW();\n",
+        "options": {
+          "queryReplacement": "={{ $json.phone }}, {{ $json.summary }}, {{ $json.summary }}\n\n"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1968,
+        0
+      ],
+      "id": "dbe3e312-4489-42df-ae6d-8fc30067be4f",
+      "name": "save chat history",
+      "credentials": {
+        "postgres": {
+          "id": "TuWS7LTe9l0P4mI9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ reply: $items('Update chat context')[0].json.aiReply }) }}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2176,
+        0
+      ],
+      "id": "902ebc47-c616-400f-8c41-938ac3cb3f17",
+      "name": "Return Reply"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "localhost:5678",
+            "user-agent": "curl/8.14.1",
+            "accept": "*/*",
+            "content-type": "application/json",
+            "content-length": "40"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "phone": "+919876543299",
+            "message": "hi"
+          },
+          "webhookUrl": "http://localhost:5678/webhook-test/chat-local",
+          "executionMode": "test"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "Build LLM Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LLM Messages": {
+      "main": [
+        [
+          {
+            "node": "AI Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Reply": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update chat context": {
+      "main": [
+        [
+          {
+            "node": "save chat history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "save chat history": {
+      "main": [
+        [
+          {
+            "node": "Return Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Action": {
+      "main": [
+        [
+          {
+            "node": "Action Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Router": {
+      "main": [
+        [
+          {
+            "node": "Register User for Event",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Unregister User from Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Action Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register User for Event": {
+      "main": [
+        [
+          {
+            "node": "Format Action Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unregister User from Event": {
+      "main": [
+        [
+          {
+            "node": "Format Action Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Action Result": {
+      "main": [
+        [
+          {
+            "node": "Update chat context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "645db1c4-770f-4af4-85d7-8a41a0c934b0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "10f6bb66100ccce88208db5bfd19802bb4a04fad8e29b443afb77e31616a7475"
+  },
+  "id": "7LH6w2TjQBIFYcCE",
+  "tags": []
+}

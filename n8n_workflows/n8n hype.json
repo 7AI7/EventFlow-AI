@@ -1,0 +1,300 @@
+{
+  "name": "Daily Hype Message Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger-8am",
+      "name": "Trigger: 8 AM Daily",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT phone, name FROM users ORDER BY phone;",
+        "options": {}
+      },
+      "id": "get-all-users",
+      "name": "Get All Users",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [460, 300],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, name, date, time, location, gmaps_link, description, capacity,\n       (SELECT COUNT(*) FROM registrations WHERE event_id = events.id) as registered\nFROM events\nWHERE date = CURRENT_DATE\n  AND cancelled = false\n  AND postponed_to IS NULL\nORDER BY time;",
+        "options": {}
+      },
+      "id": "get-todays-events",
+      "name": "Get Today's Events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [460, 480],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "users-data",
+              "name": "users",
+              "value": "={{ $json }}",
+              "type": "object"
+            },
+            {
+              "id": "events-data",
+              "name": "events",
+              "value": "={{ $('Get Today\\'s Events').all() }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "merge-data",
+      "name": "Merge Users & Events",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Get current user and all events\nconst user = $input.item.json.users;\nconst allEvents = $input.item.json.events;\n\n// If no events today, skip\nif (!allEvents || allEvents.length === 0) {\n  return { json: { skip: true, phone: user.phone } };\n}\n\n// Randomly select 3-4 events (or all if less than 3)\nconst numToSelect = Math.min(allEvents.length, Math.floor(Math.random() * 2) + 3); // 3 or 4\nconst shuffled = allEvents.sort(() => 0.5 - Math.random());\nconst selectedEvents = shuffled.slice(0, numToSelect);\n\n// Format for AI prompt\nconst eventsText = selectedEvents.map((e, idx) => \n  `${idx + 1}. **${e.json.name}** at ${e.json.time}\\n   ${e.json.description}\\n   📍 ${e.json.location}`\n).join('\\n\\n');\n\nconst totalEvents = allEvents.length;\n\nreturn {\n  json: {\n    phone: user.phone,\n    name: user.name,\n    eventsText: eventsText,\n    totalEvents: totalEvents,\n    selectedCount: selectedEvents.length,\n    selectedEventIds: selectedEvents.map(e => e.json.id),\n    skip: false\n  }\n};"
+      },
+      "id": "select-random-events",
+      "name": "Select Random Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-if-events-exist",
+      "name": "Check If Events Exist",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 250
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a cheerful event hype writer for JITO Youth's 3-day conclave.\n\nToday's featured events:\n{{ $json.eventsText }}\n\nCreate an energetic 3-4 sentence message for {{ $json.name }} that:\n1. Starts with a warm greeting\n2. Highlights these {{ $json.selectedCount }} events with 1-2 exciting facts or benefits\n3. Mentions there are {{ $json.totalEvents }} total events today\n4. Ends with \"Reply 'TODAY' to see all events!\"\n\nTone: Enthusiastic, friendly, use 2-3 emojis. Keep under 150 words."
+            }
+          ]
+        }
+      },
+      "id": "generate-hype-ai",
+      "name": "Generate Hype with AI",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [1340, 200],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_YOUR_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Extract AI-generated message\nconst aiResponse = $input.first().json;\nconst hypeMessage = aiResponse.choices?.[0]?.message?.content || aiResponse.text || aiResponse.message?.content || '';\n\n// Get user data from previous node\nconst userData = $('Select Random Events').first().json;\n\n// Create payload for notification\nconst payload = {\n  user_name: userData.name,\n  hype_message: hypeMessage,\n  event_ids: userData.selectedEventIds,\n  total_events: userData.totalEvents\n};\n\n// Schedule times: 9am, 12pm, 3pm, 6pm (various times throughout the day)\nconst scheduleTimes = ['09:00:00', '12:00:00', '15:00:00', '18:00:00'];\nconst randomTime = scheduleTimes[Math.floor(Math.random() * scheduleTimes.length)];\n\nconst scheduledAt = `CURRENT_DATE + TIME '${randomTime}'`;\n\nreturn {\n  json: {\n    phone: userData.phone,\n    template: 'HYPE',\n    payload: JSON.stringify(payload),\n    scheduled_at_expr: scheduledAt,\n    hype_message: hypeMessage\n  }\n};"
+      },
+      "id": "format-notification",
+      "name": "Format Notification Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO notifications (phone, channel, template, payload, scheduled_at, status)\nVALUES (\n  '{{ $json.phone }}',\n  'whatsapp',\n  '{{ $json.template }}',\n  '{{ $json.payload }}'::jsonb,\n  {{ $json.scheduled_at_expr }},\n  'pending'\n);",
+        "options": {}
+      },
+      "id": "insert-notification",
+      "name": "Insert Notification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1780, 200],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_YOUR_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const totalInserted = $input.all().length;\nconst firstPhone = $input.first().json.phone || 'N/A';\nconst lastPhone = $input.last().json.phone || 'N/A';\n\nreturn {\n  json: {\n    success: true,\n    total_notifications: totalInserted,\n    first_user: firstPhone,\n    last_user: lastPhone,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "summary-stats",
+      "name": "Summary Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 200]
+    }
+  ],
+  "connections": {
+    "Trigger: 8 AM Daily": {
+      "main": [
+        [
+          {
+            "node": "Get All Users",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Today's Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Users": {
+      "main": [
+        [
+          {
+            "node": "Merge Users & Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Users & Events": {
+      "main": [
+        [
+          {
+            "node": "Select Random Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Random Events": {
+      "main": [
+        [
+          {
+            "node": "Check If Events Exist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Events Exist": {
+      "main": [
+        [
+          {
+            "node": "Generate Hype with AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Hype with AI": {
+      "main": [
+        [
+          {
+            "node": "Format Notification Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Notification Data": {
+      "main": [
+        [
+          {
+            "node": "Insert Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Notification": {
+      "main": [
+        [
+          {
+            "node": "Summary Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-11-28T10:48:00.000Z",
+  "versionId": "new-workflow-hype"
+}

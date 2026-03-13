@@ -1,0 +1,467 @@
+##Constraints:
+"CONSTRAINTS"	"users_pkey"	"users"	"PRIMARY KEY"
+"CONSTRAINTS"	"fk_food_location"	"events"	"FOREIGN KEY"
+"CONSTRAINTS"	"events_pkey"	"events"	"PRIMARY KEY"
+"CONSTRAINTS"	"food_locations_pkey"	"food_locations"	"PRIMARY KEY"
+"CONSTRAINTS"	"chk_checkin_consistency"	"registrations"	"CHECK"
+"CONSTRAINTS"	"registrations_event_id_fkey"	"registrations"	"FOREIGN KEY"
+"CONSTRAINTS"	"registrations_phone_fkey"	"registrations"	"FOREIGN KEY"
+"CONSTRAINTS"	"registrations_pkey"	"registrations"	"PRIMARY KEY"
+"CONSTRAINTS"	"registrations_event_id_phone_key"	"registrations"	"UNIQUE"
+"CONSTRAINTS"	"admins_pkey"	"admins"	"PRIMARY KEY"
+"CONSTRAINTS"	"chat_history_phone_fkey"	"chat_history"	"FOREIGN KEY"
+"CONSTRAINTS"	"chat_history_pkey"	"chat_history"	"PRIMARY KEY"
+"CONSTRAINTS"	"notifications_pkey"	"notifications"	"PRIMARY KEY"
+
+##triggers:
+"TRIGGERS"	"enforce_capacity"	"registrations"
+
+##functions:
+"FUNCTIONS"	"check_event_capacity"	"FUNCTION"
+"FUNCTIONS"	"register_for_event"	"FUNCTION"
+"FUNCTIONS"	"unregister_from_event"	"FUNCTION"
+
+##indexes:
+"INDEXES"	"admins_pkey"	"admins"
+"INDEXES"	"chat_history_pkey"	"chat_history"
+"INDEXES"	"idx_chat_updated"	"chat_history"
+"INDEXES"	"events_pkey"	"events"
+"INDEXES"	"idx_events_cancelled"	"events"
+"INDEXES"	"idx_events_cancelled_true"	"events"
+"INDEXES"	"idx_events_date"	"events"
+"INDEXES"	"idx_events_date_time"	"events"
+"INDEXES"	"idx_events_description_fts"	"events"
+"INDEXES"	"food_locations_pkey"	"food_locations"
+"INDEXES"	"idx_notifications_due"	"notifications"
+"INDEXES"	"notifications_pkey"	"notifications"
+"INDEXES"	"idx_registrations_checkin"	"registrations"
+"INDEXES"	"idx_registrations_event"	"registrations"
+"INDEXES"	"idx_registrations_phone"	"registrations"
+"INDEXES"	"registrations_event_id_phone_key"	"registrations"
+"INDEXES"	"registrations_pkey"	"registrations"
+"INDEXES"	"users_pkey"	"users"
+
+##views:
+"VIEWS"	"v_events_public"
+"VIEWS"	"v_my_profile"
+"VIEWS"	"v_my_registrations"
+"VIEWS"	"v_food_public"
+
+##tables:
+"TABLES"	"admins"
+"TABLES"	"chat_history"
+"TABLES"	"events"
+"TABLES"	"food_locations"
+"TABLES"	"notifications"
+"TABLES"	"registrations"
+"TABLES"	"users"
+
+JITO=# \d events
+                                           Table "public.events"
+      Column      |            Type             | Collation | Nullable |              Default
+------------------+-----------------------------+-----------+----------+------------------------------------
+ id               | integer                     |           | not null | nextval('events_id_seq'::regclass)
+ name             | text                        |           | not null |
+ date             | date                        |           | not null |
+ time             | time without time zone      |           | not null |
+ location         | text                        |           | not null |
+ gmaps_link       | text                        |           | not null |
+ description      | text                        |           | not null |
+ agenda           | text                        |           |          |
+ contact_person   | text                        |           | not null |
+ contact_phone    | text                        |           | not null |
+ capacity         | integer                     |           | not null | 100
+ food_location_id | integer                     |           |          |
+ postponed_to     | timestamp without time zone |           |          |
+ cancelled        | boolean                     |           |          | false
+ created_at       | timestamp without time zone |           |          | now()
+ postponed_at     | timestamp without time zone |           |          |
+Indexes:
+    "events_pkey" PRIMARY KEY, btree (id)
+    "idx_events_cancelled" btree (cancelled) WHERE cancelled = false
+    "idx_events_cancelled_true" btree (cancelled) WHERE cancelled = true
+    "idx_events_date" btree (date)
+    "idx_events_date_time" btree (date, "time")
+    "idx_events_description_fts" gin (to_tsvector('english'::regconfig, description))
+Foreign-key constraints:
+    "fk_food_location" FOREIGN KEY (food_location_id) REFERENCES food_locations(id)
+Referenced by:
+    TABLE "registrations" CONSTRAINT "registrations_event_id_fkey" FOREIGN KEY (event_id) REFERENCES events(id)
+ON DELETE CASCADE
+
+
+JITO=# \d users
+                               Table "public.users"
+      Column       |            Type             | Collation | Nullable | Default
+-------------------+-----------------------------+-----------+----------+---------
+ phone             | text                        |           | not null |
+ name              | text                        |           | not null |
+ age               | integer                     |           |          |
+ email             | text                        |           |          |
+ hotel_name        | text                        |           |          |
+ hotel_room        | text                        |           |          |
+ hotel_gmaps_link  | text                        |           |          |
+ coordinator_name  | text                        |           |          |
+ coordinator_phone | text                        |           |          |
+ created_at        | timestamp without time zone |           |          | now()
+Indexes:
+    "users_pkey" PRIMARY KEY, btree (phone)
+Referenced by:
+    TABLE "chat_history" CONSTRAINT "chat_history_phone_fkey" FOREIGN KEY (phone) REFERENCES users(phone) ON DEL
+ETE CASCADE
+    TABLE "registrations" CONSTRAINT "registrations_phone_fkey" FOREIGN KEY (phone) REFERENCES users(phone)
+
+JITO=# \d registrations
+                                          Table "public.registrations"
+    Column     |            Type             | Collation | Nullable |                  Default
+---------------+-----------------------------+-----------+----------+-------------------------------------------
+ id            | integer                     |           | not null | nextval('registrations_id_seq'::regclass)
+ event_id      | integer                     |           | not null |
+ phone         | text                        |           | not null |
+ registered_at | timestamp without time zone |           |          | now()
+ checked_in    | boolean                     |           |          | false
+ checked_in_at | timestamp without time zone |           |          |
+Indexes:
+    "registrations_pkey" PRIMARY KEY, btree (id)
+    "idx_registrations_checkin" btree (checked_in) WHERE checked_in = false
+    "idx_registrations_event" btree (event_id)
+    "idx_registrations_phone" btree (phone)
+    "registrations_event_id_phone_key" UNIQUE CONSTRAINT, btree (event_id, phone)
+Check constraints:
+    "chk_checkin_consistency" CHECK (checked_in = true AND checked_in_at IS NOT NULL OR checked_in = false AND c
+hecked_in_at IS NULL)
+Foreign-key constraints:
+    "registrations_event_id_fkey" FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+    "registrations_phone_fkey" FOREIGN KEY (phone) REFERENCES users(phone)
+Triggers:
+    enforce_capacity BEFORE INSERT ON registrations FOR EACH ROW EXECUTE FUNCTION check_event_capacity()
+
+JITO=# \d food_locations
+                                         Table "public.food_locations"
+    Column    |            Type             | Collation | Nullable |                  Default
+--------------+-----------------------------+-----------+----------+--------------------------------------------
+ id           | integer                     |           | not null | nextval('food_locations_id_seq'::regclass)
+ name         | text                        |           | not null |
+ location     | text                        |           | not null |
+ sponsor_name | text                        |           | not null |
+ hours        | text                        |           | not null |
+ created_at   | timestamp without time zone |           |          | now()
+Indexes:
+    "food_locations_pkey" PRIMARY KEY, btree (id)
+Referenced by:
+    TABLE "events" CONSTRAINT "fk_food_location" FOREIGN KEY (food_location_id) REFERENCES food_locations(id)
+
+
+JITO=# \d chat_history
+                            Table "public.chat_history"
+     Column      |            Type             | Collation | Nullable |   Default
+-----------------+-----------------------------+-----------+----------+-------------
+ phone           | text                        |           | not null |
+ summary         | text                        |           |          |
+ recent_messages | jsonb                       |           | not null | '[]'::jsonb
+ updated_at      | timestamp without time zone |           |          | now()
+Indexes:
+    "chat_history_pkey" PRIMARY KEY, btree (phone)
+    "idx_chat_updated" btree (updated_at)
+Foreign-key constraints:
+    "chat_history_phone_fkey" FOREIGN KEY (phone) REFERENCES users(phone) ON DELETE CASCADE
+
+JITO=# \d notifications
+                                         Table "public.notifications"
+    Column    |            Type             | Collation | Nullable |                  Default
+--------------+-----------------------------+-----------+----------+-------------------------------------------
+ id           | integer                     |           | not null | nextval('notifications_id_seq'::regclass)
+ phone        | text                        |           | not null |
+ channel      | text                        |           | not null | 'whatsapp'::text
+ template     | text                        |           | not null |
+ payload      | jsonb                       |           | not null |
+ scheduled_at | timestamp without time zone |           | not null |
+ sent_at      | timestamp without time zone |           |          |
+ status       | text                        |           | not null | 'pending'::text
+ error        | text                        |           |          |
+Indexes:
+    "notifications_pkey" PRIMARY KEY, btree (id)
+    "idx_notifications_due" btree (scheduled_at) WHERE status = 'pending'::text
+
+
+JITO=# \df+ public.*
+
+                        List of functions
+ Schema |          Name           |  Result data type   |                Argument data types
+ | Type | Volatility | Parallel |  Owner   | Security | Access privileges | Language | Internal name |
+                         Description
+--------+-------------------------+---------------------+--------------------------------------------------
+-+------+------------+----------+----------+----------+-------------------+----------+---------------+-----
+------------------------------------------------------------------
+ public | check_event_capacity    | trigger             |
+ | func | volatile   | unsafe   | postgres | invoker  |                   | plpgsql  |               |
+ public | claim_due_notifications | SETOF notifications | p_worker_id text, p_batch_size integer DEFAULT 50
+ | func | volatile   | unsafe   | postgres | invoker  |                   | sql      |               |
+ public | register_for_event      | json                | pphone text, pevent_id integer
+ | func | volatile   | unsafe   | postgres | definer  |                   | plpgsql  |               |
+ public | unregister_from_event   | json                | p_phone text, p_event_id integer
+ | func | volatile   | unsafe   | postgres | definer  |                   | plpgsql  |               | Canc
+el registration with structured error codes for AI interpretation
+(4 rows)
+
+
+JITO=# \sf check_event_capacity
+CREATE OR REPLACE FUNCTION public.check_event_capacity()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+IF (SELECT COUNT(*) FROM registrations WHERE event_id = NEW.event_id) >=
+(SELECT capacity FROM events WHERE id = NEW.event_id) THEN
+RAISE EXCEPTION 'Event is full';
+END IF;
+RETURN NEW;
+END;
+$function$
+
+
+
+JITO=# \sf unregister_from_event
+CREATE OR REPLACE FUNCTION public.unregister_from_event(p_phone text, p_event_id integer)
+ RETURNS json
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE
+  v_event_start TIMESTAMP;
+  v_event_name TEXT;
+  v_cutoff_minutes INT := 10;  -- Default cutoff; can be made configurable later
+  v_deleted_count INT;
+  v_minutes_until_start NUMERIC;
+BEGIN
+  -- Get event start time and name
+  SELECT (date + time), name
+  INTO v_event_start, v_event_name
+  FROM events
+  WHERE id = p_event_id;
+
+  IF v_event_start IS NULL THEN
+    RETURN json_build_object(
+      'success', false,
+      'error_code', 'EVENT_NOT_FOUND'
+    );
+  END IF;
+
+  -- Calculate minutes until event starts
+  v_minutes_until_start := EXTRACT(EPOCH FROM (v_event_start - NOW())) / 60;
+
+  -- Check if within cutoff window
+  IF NOW() >= (v_event_start - (v_cutoff_minutes || ' minutes')::INTERVAL) THEN
+    RETURN json_build_object(
+      'success', false,
+      'error_code', 'TOO_LATE_TO_CANCEL',
+      'cutoff_minutes', v_cutoff_minutes,
+      'event_name', v_event_name,
+      'minutes_until_start', ROUND(v_minutes_until_start)
+    );
+  END IF;
+
+  -- Delete registration (hard delete, frees capacity)
+  DELETE FROM registrations
+  WHERE event_id = p_event_id AND phone = p_phone;
+
+  GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
+
+  IF v_deleted_count = 0 THEN
+    RETURN json_build_object(
+      'success', false,
+      'error_code', 'NOT_REGISTERED',
+      'event_name', v_event_name
+    );
+  END IF;
+
+  RETURN json_build_object(
+    'success', true,
+    'event_name', v_event_name
+  );
+END;
+$function$
+
+
+
+JITO=# \sf claim_due_notifications
+CREATE OR REPLACE FUNCTION public.claim_due_notifications(p_worker_id text, p_batch_size integer DEFAULT 50
+)
+ RETURNS SETOF notifications
+ LANGUAGE sql
+AS $function$
+  UPDATE notifications
+  SET
+    status = 'claimed',
+    claimed_at = NOW(),
+    worker_id = p_worker_id
+  WHERE id IN (
+    SELECT id
+    FROM notifications
+    WHERE status = 'pending'
+      AND scheduled_at <= NOW()
+    ORDER BY scheduled_at
+    LIMIT p_batch_size
+    FOR UPDATE SKIP LOCKED  -- Key for concurrency safety
+  )
+  RETURNING *;
+$function$
+
+
+
+JITO-# \sf register_for_event
+CREATE OR REPLACE FUNCTION public.register_for_event(pphone text, pevent_id integer)
+ RETURNS json
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE
+  veventname TEXT;
+  vlocation TEXT;
+  vgmapslink TEXT;
+  vdate DATE;
+  vtime TIME;
+  vfoodid INT;
+  vfoodname TEXT;
+  vfoodlocation TEXT;
+  vsponsor TEXT;
+  vregid INT;
+  veventdatetime TIMESTAMP;
+  vreminder6h TIMESTAMP;
+  vreminder1h TIMESTAMP;
+  vreminder10min TIMESTAMP;
+BEGIN
+  -- Fetch event details
+  SELECT name, location, gmaps_link, date, time, food_location_id
+  INTO veventname, vlocation, vgmapslink, vdate, vtime, vfoodid
+  FROM events
+  WHERE id = pevent_id
+    AND cancelled = false
+    AND (date + time) > NOW();  -- ΓåÉ FIXED: Reject past events
+
+  -- Check if event exists and is future
+  IF veventname IS NULL THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error_code', 'EVENT_NOT_FOUND',
+      'message', 'Event not found, cancelled, or already started'
+    );
+  END IF;
+
+  -- Attempt registration
+  BEGIN
+    INSERT INTO registrations (event_id, phone)
+    VALUES (pevent_id, pphone)
+    ON CONFLICT (event_id, phone) DO NOTHING
+    RETURNING id INTO vregid;
+  EXCEPTION
+    WHEN OTHERS THEN
+      RETURN jsonb_build_object(
+        'success', false,
+        'error_code', 'EVENT_FULL',
+        'event_name', veventname,
+        'message', SQLERRM
+      );
+  END;
+
+  -- Check if already registered
+  IF vregid IS NULL THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error_code', 'ALREADY_REGISTERED',
+      'event_name', veventname
+    );
+  END IF;
+
+  -- Fetch food location
+  IF vfoodid IS NOT NULL THEN
+    SELECT name, location, sponsor_name
+    INTO vfoodname, vfoodlocation, vsponsor
+    FROM food_locations
+    WHERE id = vfoodid;
+  END IF;
+
+  -- Calculate times
+  veventdatetime := vdate + vtime;
+  vreminder6h := veventdatetime - INTERVAL '6 hours';
+  vreminder1h := veventdatetime - INTERVAL '1 hour';
+  vreminder10min := veventdatetime - INTERVAL '10 minutes';
+
+  -- Insert reminder notifications (ONLY if scheduled_at is in future)
+
+  -- 6 hour reminder
+  IF vreminder6h > NOW() THEN
+    INSERT INTO notifications (phone, event_id, channel, template, payload, scheduled_at, status)
+    VALUES (
+      pphone,
+      pevent_id,
+      'whatsapp',
+      'REMINDER_6H',
+      jsonb_build_object(
+        'event_name', veventname,
+        'event_id', pevent_id,
+        'time', vtime::TEXT,
+        'location', vlocation,
+        'gmaps_link', vgmapslink
+      ),
+      vreminder6h,
+      'pending'
+    );
+  END IF;
+
+  -- 1 hour reminder
+  IF vreminder1h > NOW() THEN
+    INSERT INTO notifications (phone, event_id, channel, template, payload, scheduled_at, status)
+    VALUES (
+      pphone,
+      pevent_id,
+      'whatsapp',
+      'REMINDER_1H',
+      jsonb_build_object(
+        'event_name', veventname,
+        'event_id', pevent_id,
+        'time', vtime::TEXT,
+        'location', vlocation,
+        'gmaps_link', vgmapslink
+      ),
+      vreminder1h,
+      'pending'
+    );
+  END IF;
+
+  -- 10 minute reminder
+  IF vreminder10min > NOW() THEN
+    INSERT INTO notifications (phone, event_id, channel, template, payload, scheduled_at, status)
+    VALUES (
+      pphone,
+      pevent_id,
+      'whatsapp',
+      'REMINDER_10MIN',
+      jsonb_build_object(
+        'event_name', veventname,
+        'event_id', pevent_id,
+        'time', vtime::TEXT,
+        'location', vlocation,
+        'gmaps_link', vgmapslink
+      ),
+      vreminder10min,
+      'pending'
+    );
+  END IF;
+
+  -- Return success
+  RETURN jsonb_build_object(
+    'success', true,
+    'event_name', veventname,
+    'location', vlocation,
+    'gmaps_link', vgmapslink,
+    'date', vdate,
+    'time', vtime,
+    'food_name', COALESCE(vfoodname, 'Not assigned'),
+    'food_location', COALESCE(vfoodlocation, ''),
+    'sponsor', COALESCE(vsponsor, '')
+  );
+END;
+$function$
+
+i have given you all the database related info...dont halluciante and be thorough.
